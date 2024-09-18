@@ -1,0 +1,70 @@
+/////////////////////////////////////////////////////////////////////////
+See detailed pipline in:
+https://www.melbournebioinformatics.org.au/tutorials/tutorials/pacbio/
+
+///////////////////////
+Download reads datasets
+///////////////////////
+https://zenodo.org/records/1009308
+
+The sample used in this workshop is from a bacteria called Staphylococcus aureus. 
+We have used a small section of its real genome so that the programs can run in the workshop time.
+
+/////////////////////////////////////////
+Download reference-genome : wildtype.fna
+/////////////////////////////////////////
+https://zenodo.org/records/582600
+
+////////////////////////////////////////////////
+//1// Assemble Illumina short-reads by Spades
+////////////////////////////////////////////////
+
+spades.py -1 /home/genomics/NGS/Data/R1.fq -2 /home/genomics/NGS/Data/R2.fq -o /home/genomics/NGS/spades_out1
+
+mkdir ./NGS/compare_assemblies
+cp ./NGS/spades_out1/contigs.fasta ./NGS/compare_assemblies/spades.ctg.fasta
+
+//////////////////////////////////////////////////////////
+//2// Assemble Pacbio long-reads by Canu : 8G RAM 2 core
+//////////////////////////////////////////////////////////
+
+canu -p canu -d /home/genomics/NGS/canu_out1 genomeSize=0.03m corThreads=2 -pacbio-raw /home/genomics/NGS/Data/pacbio.fq
+
+////////////////////////////////////////////
+//3// Trim and circularise by Circlator
+////////////////////////////////////////////
+
+circlator all --threads 2 --verbose /home/genomics/NGS/canu_out1/canu.contigs.fasta /home/genomics/NGS/canu_out1/canu.correctedReads.fasta.gz /home/genomics/NGS/circlator_out1
+
+cd ./NGS/circlator_out1
+mkdir ../plasmid
+cp 06.fixstart.fasta ../plasmid/contig1.fasta
+cp 06.fixstart.fasta ../compare_assemblies/canu_raw.ctg.fasta
+
+///////////////////////////////////////////////
+//5//  Correct the assembly by Pilon
+//////////////////////////////////////////////
+
+cd ../plasmid
+mkdir ../pilon_out1
+cp contig1.fasta ../pilon_out1/contig1.fasta
+cd ../pilon_out1
+
+bwa index contig1.fasta
+bwa mem -t 2 contig1.fasta /home/genomics/NGS/Data/R1.fq /home/genomics/NGS/Data/R2.fq | samtools sort > pilon_aln.bam
+
+samtools index pilon_aln.bam
+samtools faidx contig1.fasta
+
+pilon --genome contig1.fasta --frags pilon_aln.bam --output pilon1 --fix all --mindepth 0.5 --changes --verbose --threads 2
+
+cp pilon1.fasta ../compare_assemblies/spades_canu_raw.ctg.fasta
+
+//////////////////////////////////////////////////
+//6// Compare the assemblies
+//////////////////////////////////////////////////
+
+cd ../compare_assemblies
+
+quast.py canu_raw.ctg.fasta spades.ctg.fasta spades_canu_raw.ctg.fasta -r /home/genomics/NGS/Data/wildtype.fna -o quast_out1
+
