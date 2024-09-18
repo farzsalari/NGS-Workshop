@@ -1,0 +1,114 @@
+/////////////////////////////////////////////////////////////////////////
+See detailed pipline in:
+https://www.melbournebioinformatics.org.au/tutorials/tutorials/pacbio/
+
+///////////////////////
+Download reads datasets
+///////////////////////
+https://zenodo.org/records/1009308
+
+The sample used in this workshop is from a bacteria called Staphylococcus aureus. 
+We have used a small section of its real genome so that the programs can run in the workshop time.
+
+/////////////////////////////////////////
+Download reference-genome : wildtype.fna
+/////////////////////////////////////////
+https://zenodo.org/records/582600
+
+////////////////////////////////////////////////
+//1// Assemble Illumina short-reads by Spades
+////////////////////////////////////////////////
+
+spades.py -1 /home/genomics/NGS/Data/R1.fq -2 /home/genomics/NGS/Data/R2.fq -o /home/genomics/NGS/spades_out1
+
+mkdir ./NGS/compare_assemblies
+cp ./NGS/spades_out1/contigs.fasta ./NGS/compare_assemblies/spades.ctg.fasta
+
+//////////////////////////////////////////////////////////
+//2// Assemble Pacbio long-reads by Canu : 8G RAM 2 core
+//////////////////////////////////////////////////////////
+
+canu -p canu -d /home/genomics/NGS/canu_out1 genomeSize=0.03m corThreads=2 -pacbio-raw /home/genomics/NGS/Data/pacbio.fq
+
+////////////////////////////////////////////
+//3// Trim and circularise by Circlator
+////////////////////////////////////////////
+
+circlator all --threads 2 --verbose /home/genomics/NGS/canu_out1/canu.contigs.fasta /home/genomics/NGS/canu_out1/canu.correctedReads.fasta.gz /home/genomics/NGS/circlator_out1
+
+cd ./NGS/circlator_out1
+mkdir ../plasmid
+cp 06.fixstart.fasta ../plasmid/contig1.fasta
+cp 06.fixstart.fasta ../compare_assemblies/canu_raw.ctg.fasta
+
+/////////////////////////////////////////////
+//4// Find smaller plasmids
+////////////////////////////////////////////
+cd /home/genomics/NGS/plasmid
+
+bwa index contig1.fasta
+
+bwa mem -t 2 contig1.fasta /home/genomics/NGS/Data/R1.fq /home/genomics/NGS/Data/R2.fq | samtools sort > aln.bam
+
+
+samtools index aln.bam
+samtools fastq -f 4 -1 unmapped.R1.fastq -2 unmapped.R2.fastq -s unmapped.RS.fastq aln.bam
+
+spades.py -1 unmapped.R1.fastq -2 unmapped.R2.fastq -s unmapped.RS.fastq --careful --cov-cutoff auto -o spades_out_unmapped
+
+cd spades_out_unmapped
+cp contigs.fasta contig2.fasta
+head -n 10 contig2.fasta > contig2.fa.head
+
+makeblastdb -in contig2.fasta -dbtype nucl
+blastn -query contig2.fa.head -db contig2.fasta -evalue 1e-3 -dust no -out contig2.bls
+
+nano contig2.fasta
+
+     ///////////////////////////////////
+    nano opens up a text editor.
+    Use the arrow keys to navigate. (The mouse won’t work.)
+    At the first line, delete the text, which will be something like  “>NODE_1_length_2359_cov_3.320333”
+    Type in “>contig2”
+    Don’t forget the > symbol
+    Press Control-X
+    “Save modified buffer ?” - type Y
+    Press the Enter key
+    //////////////////////////////////
+
+samtools faidx contig2.fasta
+samtools faidx contig2.fasta contig2:1-2252 > plasmid.fasta
+
+cp plasmid.fasta ../
+cd ..
+cat contig1.fasta plasmid.fasta > genome.fasta
+cp genome.fasta ../compare_assemblies/canu.ctg.fasta
+
+///////////////////////////////////////////////
+//5//
+//////////////////////////////////////////////
+
+mkdir ../pilon_out2
+cp genome.fasta ../pilon_out2/genome.fasta
+cd ../pilon_out2
+
+bwa index genome.fasta
+bwa mem -t 2 genome.fasta /home/genomics/NGS/Data/R1.fq /home/genomics/NGS/Data/R2.fq | samtools sort > pilon_aln.bam
+
+samtools index pilon_aln.bam
+samtools faidx genome.fasta
+
+pilon --genome genome.fasta --frags pilon_aln.bam --output pilon2 --fix all --mindepth 0.5 --changes --verbose --threads 2
+
+cp pilon2.fasta ../compare_assemblies/spades_canu.ctg.fasta
+
+//////////////////////////////////////////////////
+//6//
+//////////////////////////////////////////////////
+
+cd ../compare_assemblies
+
+quast.py   canu.ctg.fasta spades.ctg.fasta spades_canu.ctg.fasta -r /home/genomics/NGS/Data/wildtype.fna -o quast_out2
+
+
+
